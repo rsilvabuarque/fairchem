@@ -280,7 +280,7 @@ class MLIPPredictUnit(PredictUnit[AtomicData], MLIPPredictUnitProtocol):
         checkpoint_tasks: dict[str, Task],
     ) -> list[Task]:
         """
-        Generate Task objects for untrained derivative properties.
+        Generate Task objects for untrained properties.
 
         For each requested property+dataset combination:
         1. Verify an energy task exists for that dataset
@@ -304,6 +304,36 @@ class MLIPPredictUnit(PredictUnit[AtomicData], MLIPPredictUnitProtocol):
             if task.property == "energy":
                 for dataset in task.datasets:
                     energy_task_by_dataset[dataset] = task
+
+        # Generate per-atom energies tasks
+        for dataset in settings.predict_untrained_energies:
+            if dataset not in energy_task_by_dataset:
+                logging.warning(
+                    f"Cannot create energies task for dataset '{dataset}': "
+                    f"no energy task found. Skipping."
+                )
+                continue
+
+            energy_task = energy_task_by_dataset[dataset]
+            task_prefix = "" if energy_task.name == "energy" else f"{dataset}_"
+            untrained_tasks.append(
+                Task(
+                    name=f"{task_prefix}energies",
+                    level="atom",
+                    property="energies",
+                    out_spec=OutputSpec(
+                        dim=[1], dtype=self.inference_settings.base_precision_dtype
+                    ),
+                    normalizer=energy_task.normalizer,
+                    datasets=[dataset],
+                    loss_fn=None,
+                    element_references=energy_task.element_references,
+                    metrics=[],
+                    train_on_free_atoms=True,
+                    eval_on_free_atoms=True,
+                    inference_only=True,
+                )
+            )
 
         # Generate forces tasks
         for dataset in settings.predict_untrained_forces:
@@ -493,14 +523,56 @@ class MLIPPredictUnit(PredictUnit[AtomicData], MLIPPredictUnitProtocol):
         """
         pred_output = {}
         for task_name, task in self.model.module.tasks.items():
-            pred_output[task_name] = task.normalizer.denorm(
-                output[task_name][task.property]
-            )
+            prediction = output[task_name][task.property]
+
+            if task.property == "energies" and task.level == "atom":
+                # Keep per-atom energy sums consistent with the corresponding
+                # system-level denormalized energy by distributing the mean term
+                # across atoms in each system.
+                rmsd = task.normalizer.rmsd.to(
+                    device=prediction.device,
+                    dtype=prediction.dtype,
+                )
+                mean = task.normalizer.mean.to(
+                    device=prediction.device,
+                    dtype=prediction.dtype,
+                )
+
+                pred_output[task_name] = prediction * rmsd
+
+                if mean.numel() == 1:
+                    natoms_per_atom = data.natoms[data.batch].to(
+                        device=prediction.device,
+                        dtype=prediction.dtype,
+                    )
+                    mean_per_atom = mean / natoms_per_atom
+                    while mean_per_atom.dim() < pred_output[task_name].dim():
+                        mean_per_atom = mean_per_atom.unsqueeze(-1)
+                    pred_output[task_name] = pred_output[task_name] + mean_per_atom
+                else:
+                    pred_output[task_name] = pred_output[task_name] + mean
+
+                if undo_refs and task.element_references is not None:
+                    elem_refs = task.element_references.element_references.to(
+                        device=prediction.device,
+                        dtype=prediction.dtype,
+                    )
+                    atom_refs = elem_refs[data.atomic_numbers]
+                    while atom_refs.dim() < pred_output[task_name].dim():
+                        atom_refs = atom_refs.unsqueeze(-1)
+                    pred_output[task_name] = pred_output[task_name] + atom_refs
+            else:
+                pred_output[task_name] = task.normalizer.denorm(prediction)
+
             if self.assert_on_nans:
                 assert (
                     torch.isfinite(pred_output[task_name]).all()
                 ), f"NaNs/Infs found in prediction for task {task_name}.{task.property}"
-            if undo_refs and task.element_references is not None:
+            if (
+                task.property != "energies"
+                and undo_refs
+                and task.element_references is not None
+            ):
                 pred_output[task_name] = task.element_references.undo_refs(
                     data, pred_output[task_name]
                 )

@@ -115,6 +115,7 @@ class InferenceSettings:
     # Specify datasets as a set of strings (e.g., {"omol", "oc20"}).
     # Empty set means no untrained properties will be computed (default).
     predict_untrained_forces: set[str] = field(default_factory=set)
+    predict_untrained_energies: set[str] = field(default_factory=set)
     predict_untrained_stress: set[str] = field(default_factory=set)
     predict_untrained_hessian: set[str] = field(default_factory=set)
     hessian_vmap: bool = True  # Use fast vmap vs memory-efficient loop

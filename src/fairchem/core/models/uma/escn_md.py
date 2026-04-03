@@ -1172,6 +1172,7 @@ class MLP_EFS_Head(nn.Module, HeadInterface):
         self, data: AtomicData, emb: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
         energy_key = f"{self.prefix}_energy" if self.prefix else "energy"
+        energies_key = f"{self.prefix}_energies" if self.prefix else "energies"
         forces_key = f"{self.prefix}_forces" if self.prefix else "forces"
         stress_key = f"{self.prefix}_stress" if self.prefix else "stress"
         hessian_key = f"{self.prefix}_hessian" if self.prefix else "hessian"
@@ -1179,7 +1180,7 @@ class MLP_EFS_Head(nn.Module, HeadInterface):
         outputs = {}
 
         # Use shared energy computation from parent class
-        energy, energy_part = compute_energy(
+        energy, energy_part, node_energy = compute_energy(
             emb,
             self.energy_block,
             data["batch"],
@@ -1189,6 +1190,9 @@ class MLP_EFS_Head(nn.Module, HeadInterface):
         )
 
         outputs[energy_key] = {"energy": energy} if self.wrap_property else energy
+        outputs[energies_key] = (
+            {"energies": node_energy} if self.wrap_property else node_energy
+        )
 
         if not gp_utils.initialized():
             embeddings = emb["node_embedding"].detach()
@@ -1275,7 +1279,7 @@ class Linear_Energy_Head(nn.Module, HeadInterface):
     def forward(
         self, data_dict: AtomicData, emb: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
-        energy, _ = compute_energy(
+        energy, _, _ = compute_energy(
             emb,
             self.energy_block,
             data_dict["batch"],

@@ -90,7 +90,7 @@ def compute_energy(
     num_systems: int,
     natoms: torch.Tensor | None = None,
     reduce: Literal["sum", "mean"] = "sum",
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute system-level energy from node embeddings and an energy block.
 
     Extracts the L=0 (scalar) component from node embeddings, applies the energy
@@ -107,9 +107,10 @@ def compute_energy(
             energy; "mean" divides by natoms to return the average energy per atom.
 
     Returns:
-        A tuple of (energy, energy_part) where:
+        A tuple of (energy, energy_part, node_energy_flat) where:
         - energy: System-level energy after GP reduction and reduce, shape [num_systems].
         - energy_part: System-level energy before GP reduction (for autograd), shape [num_systems].
+        - node_energy_flat: Per-atom/node energy contributions before reduction, shape [N].
     """
     scalar_embedding = get_l_component_range(
         emb["node_embedding"], l_min=0, l_max=0
@@ -131,7 +132,7 @@ def compute_energy(
     else:
         raise ValueError(f"reduce can only be sum or mean, got: {reduce}")
 
-    return energy, energy_part
+    return energy, energy_part, node_energy_flat
 
 
 def compute_forces(

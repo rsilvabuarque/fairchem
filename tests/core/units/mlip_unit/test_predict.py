@@ -1448,6 +1448,68 @@ def test_untrained_forces_cpu(conserving_mole_checkpoint):
     _test_untrained_forces(conserving_mole_checkpoint[0], "cpu")
 
 
+@pytest.mark.gpu()
+def test_untrained_energies_gpu(conserving_mole_checkpoint):
+    """Test computing per-atom energies for energy-only checkpoint on GPU."""
+    _test_untrained_energies(conserving_mole_checkpoint[0], "cuda")
+
+
+def test_untrained_energies_cpu(conserving_mole_checkpoint):
+    """Test computing per-atom energies for energy-only checkpoint on CPU."""
+    _test_untrained_energies(conserving_mole_checkpoint[0], "cpu")
+
+
+def _test_untrained_energies(checkpoint_path, device):
+    """Test that untrained per-atom energies can be computed from energy outputs."""
+    settings = InferenceSettings(predict_untrained_energies={"omol"})
+    predictor = MLIPPredictUnit(
+        checkpoint_path, device=device, inference_settings=settings
+    )
+
+    task_names = list(predictor.tasks.keys())
+    assert any(
+        "energies" in name for name in task_names
+    ), f"No energies task found in {task_names}"
+
+    from ase.build import molecule
+
+    atoms = molecule("H2O")
+    atoms.info.update({"charge": 0, "spin": 1})
+
+    data = AtomicData.from_ase(
+        atoms,
+        task_name="omol",
+        r_data_keys=["spin", "charge"],
+        molecule_cell_size=120,
+    )
+    batch = atomicdata_list_to_batch([data])
+
+    preds = predictor.predict(batch)
+    assert "energy" in preds, "Energy prediction missing"
+    assert "energies" in preds, "Per-atom energies prediction missing"
+    assert preds["energy"].shape == (1,), f"Wrong energy shape: {preds['energy'].shape}"
+    assert preds["energies"].shape == (len(atoms),), (
+        f"Wrong per-atom energies shape: {preds['energies'].shape}"
+    )
+    assert torch.isfinite(preds["energies"]).all(), "Per-atom energies contain NaN or Inf"
+    torch.testing.assert_close(
+        preds["energies"].sum().to(dtype=preds["energy"].dtype),
+        preds["energy"][0],
+        rtol=1e-5,
+        atol=1e-5,
+    )
+
+    preds_no_refs = predictor.predict(batch, undo_element_references=False)
+    assert "energy" in preds_no_refs
+    assert "energies" in preds_no_refs
+    torch.testing.assert_close(
+        preds_no_refs["energies"].sum().to(dtype=preds_no_refs["energy"].dtype),
+        preds_no_refs["energy"][0],
+        rtol=1e-5,
+        atol=1e-5,
+    )
+
+
 def _test_untrained_forces(checkpoint_path, device):
     """
     Test that untrained forces can be computed for energy-only checkpoint.
