@@ -124,16 +124,15 @@ def lookup_atomic_number_by_mass(mass_arr: np.ndarray | float) -> np.ndarray | i
     return atomic_numbers
 
 
-def separate_run_commands(input_script: str) -> tuple[list[str], list[str]]:
-    lines = input_script.splitlines()
-    run_cmds = []
-    script = []
-    for line in lines:
-        if line.startswith("run"):
-            run_cmds.append(line)
-        else:
-            script.append(line)
-    return script, run_cmds
+def is_lammps_command(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped) and not stripped.startswith("#")
+
+
+def is_run_command(line: str) -> bool:
+    if not is_lammps_command(line):
+        return False
+    return line.strip().split(maxsplit=1)[0].lower() == "run"
 
 
 def restricted_cell_from_lammps_box(boxlo, boxhi, xy, yz, xz):
@@ -189,6 +188,34 @@ class FixExternalCallback:
         f[:] = results["forces"].cpu().numpy()[:]
         lmp.fix_external_set_energy_global(FIX_EXT_ID, results["energy"].item())
 
+        if "energies" in results:
+            per_atom_energy = (
+                results["energies"].detach().cpu().numpy().astype(np.float64, copy=False)
+            )
+            per_atom_energy = np.asarray(per_atom_energy).reshape(-1)
+            if per_atom_energy.shape[0] != nlocal:
+                raise ValueError(
+                    "Per-atom energy shape mismatch: "
+                    f"expected {nlocal}, got {per_atom_energy.shape[0]}"
+                )
+        else:
+            if not getattr(lmp, "_warned_missing_per_atom_energies", False):
+                logging.warning(
+                    "Predictor output does not include 'energies'. Falling back to "
+                    "uniform per-atom energy split in the LAMMPS callback. "
+                    "Enable per-atom energies via "
+                    "InferenceSettings.predict_untrained_energies for physical "
+                    "per-atom energy decomposition."
+                )
+                lmp._warned_missing_per_atom_energies = True
+            per_atom_energy = np.full(
+                nlocal,
+                results["energy"].item() / max(nlocal, 1),
+                dtype=np.float64,
+            )
+
+        lmp.fix_external_set_energy_peratom(FIX_EXT_ID, per_atom_energy)
+
         # during NPT for example, box_change should be set to 1 by lammps to allow the cell to change
         if box_change:
             # stress is defined as -virial/volume in lammps
@@ -215,17 +242,29 @@ def run_lammps_with_fairchem(
     lmp = lammps(name=machine, cmdargs=["-nocite", "-log", "none", "-echo", "screen"])
     lmp._predictor = predictor
     lmp._task_name = task_name
-    # run_cmds = []
+    lmp._warned_missing_per_atom_energies = False
     with open(lammps_input_path) as f:
         input_script = f.read()
         check_input_script(input_script)
-        script, run_cmds = separate_run_commands(input_script)
         logging.info(f"Running input script: {input_script}")
-        lmp.commands_list(script)
-        lmp.command(FIX_EXTERNAL_CMD)
         fix_external_call_back = FixExternalCallback(charge=charge, spin=spin)
-        lmp.set_fix_external_callback(FIX_EXT_ID, fix_external_call_back, lmp)
-        lmp.commands_list(run_cmds)
+        fix_initialized = False
+        for line in input_script.splitlines():
+            if not is_lammps_command(line):
+                continue
+
+            if is_run_command(line) and not fix_initialized:
+                lmp.command(FIX_EXTERNAL_CMD)
+                lmp.command(f"fix_modify {FIX_EXT_ID} energy yes")
+                lmp.set_fix_external_callback(FIX_EXT_ID, fix_external_call_back, lmp)
+                fix_initialized = True
+
+            lmp.command(line)
+
+        if not fix_initialized:
+            logging.warning(
+                "No run command found in LAMMPS input. External callback fix was not initialized."
+            )
     return lmp
 
 

@@ -6,7 +6,11 @@ import tempfile
 import numpy as np
 import pytest
 from ase import Atoms
-from fairchem.lammps.lammps_fc import restricted_cell_from_lammps_box
+from fairchem.lammps.lammps_fc import (
+    is_lammps_command,
+    is_run_command,
+    restricted_cell_from_lammps_box,
+)
 
 
 def create_lammps_data_file(filepath, positions, cell, atom_types, masses):
@@ -57,6 +61,20 @@ def create_lammps_data_file(filepath, positions, cell, atom_types, masses):
         f.write("Atoms\n\n")
         for i, (pos, atype) in enumerate(zip(positions, atom_types), start=1):
             f.write(f"{i} {atype} {pos[0]} {pos[1]} {pos[2]}\n")
+
+
+def test_is_lammps_command() -> None:
+    assert is_lammps_command("run 10")
+    assert is_lammps_command("  fix 1 all nve")
+    assert not is_lammps_command("   ")
+    assert not is_lammps_command("# comment")
+
+
+def test_is_run_command() -> None:
+    assert is_run_command("run 10")
+    assert is_run_command("   RUN 100")
+    assert not is_run_command("minimize 1e-6 1e-8 100 1000")
+    assert not is_run_command("# run 10")
 
 
 @pytest.mark.parametrize(

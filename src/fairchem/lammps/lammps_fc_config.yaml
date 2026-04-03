@@ -6,6 +6,9 @@ if_settings:
   activation_checkpointing: False
   internal_graph_gen_version: 2
   external_graph_gen: False
+  # Request atom-level potential energies for LAMMPS per-atom outputs (pe/atom).
+  # Datasets not present in the active checkpoint are safely ignored.
+  predict_untrained_energies: [omol, omat, oc20, odac, oc25, omc]
 
 # Use normal predict unit
 local_predict_unit:
