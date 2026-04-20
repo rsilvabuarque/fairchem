@@ -15,7 +15,7 @@ local_predict_unit:
   _target_: fairchem.core.units.mlip_unit.load_predict_unit
   path:
     _target_: fairchem.core.calculate.pretrained_mlip.pretrained_checkpoint_path_from_name
-    model_name: "uma-s-1p1"
+    model_name: "uma-s-1p2"
   device: cuda
   inference_settings: ${if_settings}
 
@@ -24,7 +24,7 @@ parallel_predict_unit:
   _target_: fairchem.core.units.mlip_unit.predict.ParallelMLIPPredictUnit
   inference_model_path:
     _target_: fairchem.core.calculate.pretrained_mlip.pretrained_checkpoint_path_from_name
-    model_name: "uma-s-1p1"
+    model_name: "uma-s-1p2"
   device: cuda
   inference_settings: ${if_settings}
   num_workers: 8
