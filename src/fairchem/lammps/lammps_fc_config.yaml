@@ -27,7 +27,7 @@ parallel_predict_unit:
     model_name: "uma-s-1p2"
   device: cuda
   inference_settings: ${if_settings}
-  num_workers: 8
+  num_workers: 4
 
 predict_unit: ${local_predict_unit}
 lmp_in: "lammps_in_example.file"
